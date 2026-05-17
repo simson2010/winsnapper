@@ -8,10 +8,10 @@ pushd "%~dp0"
 ::   (uses: python -m PyInstaller)
 :: ============================================================
 
-:: Step 1: Generate icon.ico (if not already present)
-if not exist icon.ico (
-    echo Generating icon.ico ...
-    python icon.py
+:: Step 1: Generate icon\icon.ico (if not already present)
+if not exist icon\icon.ico (
+    echo Generating icon\icon.ico ...
+    python icon.py -f ico -v blue
 )
 
 :: Step 2: Run PyInstaller
@@ -19,10 +19,10 @@ echo Building WinSnap.exe ...
 python -m PyInstaller ^
     --onefile ^
     --windowed ^
-    --icon=icon.ico ^
+    --icon=icon\icon.ico ^
     --name=WinSnap ^
     --hidden-import=tkinter ^
-    --add-data "icon.ico;." ^
+    --add-data "icon\icon.ico;." ^
     winsnap.py
 
 echo.

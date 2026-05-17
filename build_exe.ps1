@@ -12,10 +12,10 @@ function Invoke-Python {
     }
 }
 
-# Step 1: Generate icon.ico (if missing)
-if (-not (Test-Path -LiteralPath 'icon.ico')) {
-    Write-Host 'Generating icon.ico ...'
-    Invoke-Python -Args @('icon.py')
+# Step 1: Generate icon\icon.ico (if missing)
+if (-not (Test-Path -LiteralPath 'icon\icon.ico')) {
+    Write-Host 'Generating icon\icon.ico ...'
+    Invoke-Python -Args @('icon.py', '-f', 'ico', '-v', 'blue')
 }
 
 # Step 2: PyInstaller (via python -m, works when pyinstaller.exe is not on PATH)
@@ -24,10 +24,10 @@ Invoke-Python -Args @(
     '-m', 'PyInstaller',
     '--onefile',
     '--windowed',
-    '--icon=icon.ico',
+    '--icon=icon\icon.ico',
     '--name=WinSnap',
     '--hidden-import=tkinter',
-    '--add-data', 'icon.ico;.',
+    '--add-data', 'icon\icon.ico;.',
     'winsnap.py'
 )
 

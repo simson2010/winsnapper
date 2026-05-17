@@ -16,9 +16,6 @@ build/
 dist/
 *.spec
 
-# Generated assets (recreated by icon.py / build scripts)
-icon.ico
-
 # User-specific runtime config (optional; remove this line to track defaults)
 winsnap_config.json
 

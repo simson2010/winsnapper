@@ -39,7 +39,17 @@ APP_NAME: str = "WinSnap"
 APP_VERSION: str = "2.0.0"
 # Time for the shell to process tray-icon removal before os._exit (seconds)
 _TRAY_REMOVE_DELAY_S: float = 0.35
-ICON_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+_SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_icon_path() -> str:
+    """Dev: ``icon/icon.ico``; frozen one-file: ``icon.ico`` in ``_MEIPASS``."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(getattr(sys, "_MEIPASS", _SCRIPT_DIR), "icon.ico")
+    return os.path.join(_SCRIPT_DIR, "icon", "icon.ico")
+
+
+ICON_PATH: str = _resolve_icon_path()
 CONFIG_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "winsnap_config.json")
 
 # Default hotkey configuration  {action_key: hotkey_string}
