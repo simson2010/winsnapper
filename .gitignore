@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+winsnap-venv/
+env/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Generated assets (recreated by icon.py / build scripts)
+icon.ico
+
+# User-specific runtime config (optional; remove this line to track defaults)
+winsnap_config.json
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs & temp
+*.log
+*.tmp
