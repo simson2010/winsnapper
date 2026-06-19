@@ -83,8 +83,9 @@ _PystrayIcon._mainloop = _patched_mainloop
 # Monkey-patch keyboard library: make process() survive callback exceptions.
 # The stock process() has no try/except — one bad callback kills the thread
 # and hotkeys stop working forever with no way to restart.
+# Patch the CLASS, not the instance, so Thread(target=self.process) works.
 # ---------------------------------------------------------------------------
-_original_keyboard_process = keyboard._listener.process
+import keyboard._generic as _keyboard_generic
 
 
 def _patched_keyboard_process(self):
@@ -97,10 +98,9 @@ def _patched_keyboard_process(self):
             self.queue.task_done()
         except Exception:
             traceback.print_exc()
-            # Don't die — keep processing events
 
 
-keyboard._listener.process = _patched_keyboard_process
+_keyboard_generic.GenericListener.process = _patched_keyboard_process
 
 # ---------------------------------------------------------------------------
 # Constants
