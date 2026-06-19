@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import time
+import logging
 import threading
 import ctypes
 from typing import Dict, Optional, Tuple, List
@@ -61,6 +62,19 @@ def _resolve_app_dir() -> str:
 
 APP_DIR: str = _resolve_app_dir()
 CONFIG_PATH: str = os.path.join(APP_DIR, "winsnap_config.json")
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+LOG_PATH: str = os.path.join(APP_DIR, "winsnap.log")
+logger = logging.getLogger("winsnap")
+logger.setLevel(logging.DEBUG)
+_log_formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+)
+_log_file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+_log_file_handler.setFormatter(_log_formatter)
+logger.addHandler(_log_file_handler)
 
 # Default hotkey configuration  {action_key: hotkey_string}
 DEFAULT_HOTKEYS: Dict[str, str] = {
@@ -121,6 +135,7 @@ def load_config() -> Dict[str, str]:
     Returns:
         A dict mapping action keys to hotkey strings.
     """
+    logger.info("Loading config from %s", CONFIG_PATH)
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -132,9 +147,10 @@ def load_config() -> Dict[str, str]:
                 for key, value in raw.items():
                     if key in DEFAULT_HOTKEYS and isinstance(value, str) and value.strip():
                         merged[key] = value.strip()
+            logger.info("Config loaded: %s", merged)
             return merged
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        pass
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load config (%s), using defaults", e)
     return dict(DEFAULT_HOTKEYS)
 
 
@@ -144,9 +160,11 @@ def save_config(hotkeys: Dict[str, str]) -> None:
     Args:
         hotkeys: A dict mapping action keys to hotkey strings.
     """
+    logger.info("Saving config to %s: %s", CONFIG_PATH, hotkeys)
     data = {"hotkeys": hotkeys}
     with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
+    logger.info("Config saved successfully")
 
 
 # ---------------------------------------------------------------------------
@@ -157,9 +175,11 @@ def _enable_dpi_awareness() -> None:
     """Set per-monitor DPI awareness so win32 geometry calls are accurate."""
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        logger.info("DPI awareness: PROCESS_PER_MONITOR_DPI_AWARE")
     except AttributeError:
         # Windows 7 / early Win8 — fall back to system DPI aware
         ctypes.windll.user32.SetProcessDPIAware()
+        logger.info("DPI awareness: fallback SetProcessDPIAware")
 
 
 # ---------------------------------------------------------------------------
@@ -383,13 +403,16 @@ def snap_window(position: str) -> None:
         position: One of ``'left'``, ``'right'``, ``'top'``, ``'bottom'``,
                   ``'center'``, ``'full'``.
     """
+    logger.info("snap_window(%s) triggered", position)
     _refresh_shell_hwnds()
     hwnd: int = win32gui.GetForegroundWindow()
     if not _is_snapifiable(hwnd):
+        logger.debug("snap_window(%s): hwnd %d not snapifiable, skipping", position, hwnd)
         return
 
     identity = _window_identity(hwnd)
     if identity is None:
+        logger.debug("snap_window(%s): hwnd %d identity is None, skipping", position, hwnd)
         return
 
     with _state_lock:
@@ -508,6 +531,8 @@ def snap_window(position: str) -> None:
         pw += bl + br
         ph += bt + bb
 
+    logger.info("snap_window(%s): hwnd=%d level=%d -> (%d, %d, %d, %d)",
+                position, hwnd, level, x, y, pw, ph)
     win32gui.MoveWindow(hwnd, x, y, pw, ph, True)
 
 
@@ -517,19 +542,23 @@ def restore_window() -> None:
     If no previous position is recorded for this window, the call is a no-op.
     Clears snap state for this window so incremental sizing restarts at 50%.
     """
+    logger.info("restore_window() triggered")
     _refresh_shell_hwnds()
     hwnd: int = win32gui.GetForegroundWindow()
     if not _is_snapifiable(hwnd):
+        logger.debug("restore_window: hwnd %d not snapifiable, skipping", hwnd)
         return
 
     identity = _window_identity(hwnd)
     if identity is None:
+        logger.debug("restore_window: hwnd %d identity is None, skipping", hwnd)
         return
 
     with _state_lock:
         _prune_stale_hwnds()
         entry = original_positions.get(hwnd)
         if entry is None:
+            logger.debug("restore_window: hwnd %d has no saved position", hwnd)
             return
         stored_id, rect = entry
         if not _identities_match(stored_id, identity):
@@ -538,6 +567,7 @@ def restore_window() -> None:
         _clear_window_state(hwnd)
 
     left, top, right, bottom = rect
+    logger.info("restore_window: hwnd=%d -> (%d, %d, %d, %d)", hwnd, left, top, right, bottom)
     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
     win32gui.MoveWindow(hwnd, left, top, right - left, bottom - top, True)
 
@@ -570,14 +600,16 @@ def register_hotkeys() -> None:
         combo = current_hotkeys.get(action, DEFAULT_HOTKEYS[action])
         try:
             keyboard.add_hotkey(combo, handler, suppress=False)
+            logger.info("Hotkey registered: %s -> %s", combo, action)
         except (ValueError, KeyError):
             # Invalid combo — fall back to default
             default_combo = DEFAULT_HOTKEYS.get(action)
             if default_combo and default_combo != combo:
                 try:
                     keyboard.add_hotkey(default_combo, handler, suppress=False)
+                    logger.info("Hotkey registered (fallback): %s -> %s", default_combo, action)
                 except (ValueError, KeyError):
-                    pass  # Default also failed — skip silently
+                    logger.warning("Hotkey failed for %s: %s and default %s", action, combo, default_combo)
 
 
 def register_hotkeys_with_fallback() -> None:
@@ -599,17 +631,20 @@ def register_hotkeys_with_fallback() -> None:
         combo = current_hotkeys.get(action, DEFAULT_HOTKEYS[action])
         try:
             keyboard.add_hotkey(combo, handler, suppress=False)
+            logger.info("Hotkey registered: %s -> %s", combo, action)
         except (ValueError, KeyError):
             default_combo = DEFAULT_HOTKEYS[action]
             try:
                 keyboard.add_hotkey(default_combo, handler, suppress=False)
                 current_hotkeys[action] = default_combo
+                logger.info("Hotkey registered (fallback): %s -> %s", default_combo, action)
             except (ValueError, KeyError):
-                pass  # Default also failed — skip silently
+                logger.warning("Hotkey failed for %s: %s and default %s", action, combo, default_combo)
 
 
 def reregister_hotkeys() -> None:
     """Unregister all hotkeys and re-register from current_hotkeys."""
+    logger.info("Re-registering all hotkeys")
     keyboard.unhook_all_hotkeys()
     register_hotkeys()
 
@@ -647,15 +682,18 @@ def _open_settings_window() -> None:
     global _settings_window_open
 
     if _settings_window_open:
+        logger.debug("Settings window already open, skipping")
         return  # Already open — don't create a duplicate
 
     _settings_window_open = True
+    logger.info("Opening settings window")
 
     try:
         _open_settings_window_inner()
     except Exception:  # pylint: disable=broad-except
         # If anything goes wrong, ensure the flag is reset so
         # the settings window can be opened again.
+        logger.exception("Settings window error")
         _settings_window_open = False
 
 
@@ -837,12 +875,14 @@ def _open_settings_window_inner() -> None:
     def _on_save() -> None:
         """Persist the working hotkeys and re-register."""
         global current_hotkeys
+        logger.info("Settings Save clicked")
         duplicates = _find_duplicate_hotkeys(working_hotkeys)
         if duplicates:
             a, b = duplicates[0]
             label_a = ACTION_LABELS.get(a, a)
             label_b = ACTION_LABELS.get(b, b)
             combo = working_hotkeys.get(b, "")
+            logger.warning("Duplicate hotkey detected: %s used by both %s and %s", combo, a, b)
             messagebox.showerror(
                 "Duplicate shortcut",
                 f"The shortcut \"{combo}\" is assigned to both\n"
@@ -893,6 +933,7 @@ def _on_settings_close(root: object) -> None:
     the wrong thread.
     """
     global _settings_window_open
+    logger.info("Closing settings window")
     _settings_window_open = False
     if isinstance(root, tk.Tk):
         # root.destroy() alone is sufficient — it exits the mainloop
@@ -976,8 +1017,10 @@ def _shutdown_process(delay_s: float = _TRAY_REMOVE_DELAY_S) -> None:
     A short delay lets pystray's message loop run ``NIM_DELETE`` before
     the process is killed (immediate ``os._exit`` leaves a ghost tray icon).
     """
+    logger.info("Shutting down in %.2fs", delay_s)
     if delay_s > 0:
         time.sleep(delay_s)
+    logger.info("Exiting process")
     os._exit(0)
 
 
@@ -994,6 +1037,7 @@ def _exit_app(icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG0
     ``RuntimeError: main thread is not in main loop`` during normal
     shutdown.
     """
+    logger.info("Exit requested, cleaning up")
     # Best-effort: unhook keyboard before stopping the tray.
     # If this raises (e.g. hook already removed), just continue.
     try:
@@ -1051,6 +1095,13 @@ def main() -> None:
     """
     global current_hotkeys, _tray_icon
 
+    logger.info("=== %s v%s starting ===", APP_NAME, APP_VERSION)
+    logger.info("APP_DIR: %s", APP_DIR)
+    logger.info("CONFIG_PATH: %s", CONFIG_PATH)
+    logger.info("ICON_PATH: %s", ICON_PATH)
+    logger.info("LOG_PATH: %s", LOG_PATH)
+    logger.info("Frozen: %s", getattr(sys, "frozen", False))
+
     _enable_dpi_awareness()
     _init_shell_hwnds()
 
@@ -1059,21 +1110,26 @@ def main() -> None:
 
     # Generate icon.ico next to the executable / script if missing
     if not os.path.isfile(ICON_PATH):
+        logger.info("Icon not found at %s, attempting generation", ICON_PATH)
         try:
             from icon import save_icon  # type: ignore[import]
             save_icon(ICON_PATH)
+            logger.info("Icon generated at %s", ICON_PATH)
         except Exception:  # pylint: disable=broad-except
-            pass  # Non-fatal; fallback image will be used
+            logger.warning("Icon generation failed, fallback image will be used")
 
     # Start hotkey listener on a daemon thread so it doesn't block the tray
     hotkey_thread = threading.Thread(target=register_hotkeys, daemon=True)
     hotkey_thread.start()
+    logger.info("Hotkey listener thread started")
 
     # Block on the tray icon loop
     _tray_icon = build_tray_icon()
+    logger.info("Starting tray icon event loop")
     _tray_icon.run()
 
     # Normal exit path: icon.stop() returned (e.g. after Exit menu).
+    logger.info("Tray icon stopped, shutting down")
     try:
         keyboard.unhook_all_hotkeys()
     except Exception:  # pylint: disable=broad-except
