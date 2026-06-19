@@ -106,7 +106,7 @@ _keyboard_generic.GenericListener.process = _patched_keyboard_process
 # Constants
 # ---------------------------------------------------------------------------
 APP_NAME: str = "WinSnap"
-APP_VERSION: str = "2.0.0"
+APP_VERSION: str = "1.1.0"
 # Time for the shell to process tray-icon removal before os._exit (seconds)
 _TRAY_REMOVE_DELAY_S: float = 0.35
 _SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
