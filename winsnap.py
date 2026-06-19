@@ -50,7 +50,17 @@ def _resolve_icon_path() -> str:
 
 
 ICON_PATH: str = _resolve_icon_path()
-CONFIG_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "winsnap_config.json")
+
+
+def _resolve_app_dir() -> str:
+    """Dev: script directory; frozen one-file: directory containing the .exe."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+APP_DIR: str = _resolve_app_dir()
+CONFIG_PATH: str = os.path.join(APP_DIR, "winsnap_config.json")
 
 # Default hotkey configuration  {action_key: hotkey_string}
 DEFAULT_HOTKEYS: Dict[str, str] = {
