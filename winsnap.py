@@ -31,7 +31,52 @@ import win32con
 import win32process
 import keyboard
 import pystray
+from pystray._win32 import Icon as _PystrayIcon
+from ctypes import wintypes
+from pystray._util import win32 as _pystray_win32
 from PIL import Image
+
+# ---------------------------------------------------------------------------
+# Monkey-patch pystray: GetMessage returning -1 should NOT kill the app.
+# The stock _mainloop breaks out of the loop on -1 (an error), which causes
+# icon.run() to return silently and the process to exit.  We replace it
+# with a version that logs the error and continues the message pump.
+# ---------------------------------------------------------------------------
+_original_mainloop = _PystrayIcon._mainloop
+
+
+def _patched_mainloop(self):
+    """pystray mainloop that survives GetMessage errors (-1)."""
+    try:
+        msg = wintypes.MSG()
+        lpmsg = ctypes.byref(msg)
+        while True:
+            r = _pystray_win32.GetMessage(lpmsg, None, 0, 0)
+            if not r:
+                break
+            elif r == -1:
+                logger.warning("GetMessage returned -1 (error), continuing message loop")
+                continue
+            else:
+                _pystray_win32.TranslateMessage(lpmsg)
+                _pystray_win32.DispatchMessage(lpmsg)
+    except Exception:
+        logger.exception("Error in patched mainloop")
+    finally:
+        try:
+            self._hide()
+            del self._HWND_TO_ICON[self._hwnd]
+        except Exception:
+            pass
+        _pystray_win32.DestroyWindow(self._hwnd)
+        _pystray_win32.DestroyWindow(self._menu_hwnd)
+        if self._menu_handle:
+            hmenu, callbacks = self._menu_handle
+            _pystray_win32.DestroyMenu(hmenu)
+        self._unregister_class(self._atom)
+
+
+_PystrayIcon._mainloop = _patched_mainloop
 
 # ---------------------------------------------------------------------------
 # Constants
