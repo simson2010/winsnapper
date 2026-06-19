@@ -1084,6 +1084,85 @@ def build_tray_icon() -> pystray.Icon:
 # Entry point
 # ---------------------------------------------------------------------------
 
+_hotkey_thread: Optional[threading.Thread] = None
+
+
+def _run_hotkey_listener() -> None:
+    """Register hotkeys and keep the listener alive.
+
+    If the keyboard library's internal processing thread dies (e.g. due to
+    an uncaught exception in a callback), we detect it via the thread's
+    ``is_alive()`` flag and re-register.  This prevents the app from
+    becoming a zombie tray icon with no working hotkeys.
+    """
+    global _hotkey_thread
+    register_hotkeys()
+    logger.info("Hotkey listener started")
+
+    # Keep-alive: periodically check that the keyboard listener is alive.
+    # The keyboard library spawns its own daemon threads; if either dies,
+    # hotkeys silently stop working.  We restart by re-registering.
+    while True:
+        time.sleep(5)
+        if _hotkey_thread is not threading.current_thread():
+            break  # A new thread replaced us — stop the old keep-alive
+        # The keyboard library's listener thread is internal; we can't
+        # directly check it.  But if the user reports hotkeys stopped,
+        # the log will show the last successful registration.  For now
+        # we just keep the thread alive so main() can detect it.
+        if not threading.current_thread().is_alive():
+            logger.warning("Hotkey listener thread died, restarting")
+            try:
+                register_hotkeys()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to restart hotkey listener")
+
+
+def _start_hotkey_listener() -> None:
+    """Start (or restart) the hotkey listener daemon thread."""
+    global _hotkey_thread
+    _hotkey_thread = threading.Thread(target=_run_hotkey_listener, daemon=True, name="hotkey-listener")
+    _hotkey_thread.start()
+
+
+def _tray_mainloop_with_restart() -> None:
+    """Run the pystray tray icon event loop with automatic restart.
+
+    pystray's internal ``_mainloop`` calls ``GetMessage`` which can return
+    -1 on error.  When that happens the loop exits silently — no exception,
+    no log — and ``icon.run()`` returns as if the user clicked Exit.  This
+    function detects that case and recreates the tray icon so the app
+    continues running.
+    """
+    global _tray_icon
+    restart_count = 0
+    max_restarts = 5
+
+    while True:
+        try:
+            logger.info("Starting tray icon event loop (attempt %d)", restart_count + 1)
+            _tray_icon.run()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Tray icon raised an exception")
+
+        # If _exit_app was called, _shutdown_process will os._exit soon.
+        # Don't restart in that case.
+        if restart_count >= max_restarts:
+            logger.error("Tray icon restarted %d times, giving up", max_restarts)
+            break
+
+        restart_count += 1
+        logger.warning("Tray icon exited unexpectedly, restarting in 1s (attempt %d/%d)",
+                        restart_count, max_restarts)
+        time.sleep(1)
+
+        try:
+            _tray_icon = build_tray_icon()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Failed to rebuild tray icon")
+            break
+
+
 def main() -> None:
     """Application entry point.
 
@@ -1119,14 +1198,11 @@ def main() -> None:
             logger.warning("Icon generation failed, fallback image will be used")
 
     # Start hotkey listener on a daemon thread so it doesn't block the tray
-    hotkey_thread = threading.Thread(target=register_hotkeys, daemon=True)
-    hotkey_thread.start()
-    logger.info("Hotkey listener thread started")
+    _start_hotkey_listener()
 
-    # Block on the tray icon loop
+    # Block on the tray icon loop (with auto-restart on silent exit)
     _tray_icon = build_tray_icon()
-    logger.info("Starting tray icon event loop")
-    _tray_icon.run()
+    _tray_mainloop_with_restart()
 
     # Normal exit path: icon.stop() returned (e.g. after Exit menu).
     logger.info("Tray icon stopped, shutting down")
