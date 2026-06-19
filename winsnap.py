@@ -19,6 +19,7 @@ import json
 import time
 import logging
 import threading
+import traceback
 import ctypes
 from typing import Dict, Optional, Tuple, List
 
@@ -77,6 +78,29 @@ def _patched_mainloop(self):
 
 
 _PystrayIcon._mainloop = _patched_mainloop
+
+# ---------------------------------------------------------------------------
+# Monkey-patch keyboard library: make process() survive callback exceptions.
+# The stock process() has no try/except — one bad callback kills the thread
+# and hotkeys stop working forever with no way to restart.
+# ---------------------------------------------------------------------------
+_original_keyboard_process = keyboard._listener.process
+
+
+def _patched_keyboard_process(self):
+    """keyboard listener process loop that survives callback exceptions."""
+    while True:
+        try:
+            event = self.queue.get()
+            if self.pre_process_event(event):
+                self.invoke_handlers(event)
+            self.queue.task_done()
+        except Exception:
+            traceback.print_exc()
+            # Don't die — keep processing events
+
+
+keyboard._listener.process = _patched_keyboard_process
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1135,31 +1159,36 @@ _hotkey_thread: Optional[threading.Thread] = None
 def _run_hotkey_listener() -> None:
     """Register hotkeys and keep the listener alive.
 
-    If the keyboard library's internal processing thread dies (e.g. due to
-    an uncaught exception in a callback), we detect it via the thread's
-    ``is_alive()`` flag and re-register.  This prevents the app from
-    becoming a zombie tray icon with no working hotkeys.
+    Monitors the keyboard library's internal threads (listening_thread and
+    processing_thread). If either dies, reset the listener state and
+    re-register all hotkeys.
     """
     global _hotkey_thread
     register_hotkeys()
     logger.info("Hotkey listener started")
 
-    # Keep-alive: periodically check that the keyboard listener is alive.
-    # The keyboard library spawns its own daemon threads; if either dies,
-    # hotkeys silently stop working.  We restart by re-registering.
     while True:
-        time.sleep(5)
+        time.sleep(3)
         if _hotkey_thread is not threading.current_thread():
             break  # A new thread replaced us — stop the old keep-alive
-        # The keyboard library's listener thread is internal; we can't
-        # directly check it.  But if the user reports hotkeys stopped,
-        # the log will show the last successful registration.  For now
-        # we just keep the thread alive so main() can detect it.
-        if not threading.current_thread().is_alive():
-            logger.warning("Hotkey listener thread died, restarting")
+
+        listener = keyboard._listener
+        lt_alive = listener.listening_thread.is_alive() if listener.listening_thread else False
+        pt_alive = listener.processing_thread.is_alive() if listener.processing_thread else False
+
+        if not lt_alive or not pt_alive:
+            logger.warning("Keyboard listener thread died (listening=%s, processing=%s), restarting",
+                           lt_alive, pt_alive)
+            try:
+                keyboard.unhook_all_hotkeys()
+            except Exception:
+                pass
+            # Force reset so start_if_necessary() will create new threads
+            listener.listening = False
             try:
                 register_hotkeys()
-            except Exception:  # pylint: disable=broad-except
+                logger.info("Hotkey listener restarted successfully")
+            except Exception:
                 logger.exception("Failed to restart hotkey listener")
 
 
