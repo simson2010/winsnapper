@@ -38,6 +38,14 @@ PyInstaller spec: `WinSnap.spec`. The `--hidden-import=tkinter` flag is required
 
 - `winsnap.py:1057` imports `save_icon` from `icon.py` — but `icon.py` only defines `draw_icon`, `generate_svg`, `generate_all`, `main`. The `save_icon` function doesn't exist. This means auto-generation of the icon at runtime silently fails (caught by bare `except`). To fix: add a `save_icon(path)` wrapper to `icon.py`, or change the import in `winsnap.py`.
 
+## Rules
+
+- **After every code change, follow this sequence** before considering the task done:
+  1. Run unit tests — `winsnap-venv\Scripts\python.exe -m unittest discover -s unittests -v`
+  2. Run compile/build test — `build_exe.bat`
+  3. Git commit (local only, do not push)
+- **Unit tests live in `unittests/`** — add new tests there, not scattered elsewhere.
+
 ## Gotchas
 
 - `keyboard` library requires root/admin on some systems — hotkeys silently fail otherwise.

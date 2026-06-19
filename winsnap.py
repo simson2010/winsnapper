@@ -885,17 +885,13 @@ def _on_settings_close(root: object) -> None:
     global _settings_window_open
     _settings_window_open = False
     if isinstance(root, tk.Tk):
-        root.unbind("<Key>")
-        # Destroy all child widgets first — this releases internal
-        # StringVar / Tcl references before we tear down the root,
-        # preventing cross-thread GC errors.
+        # root.destroy() alone is sufficient — it exits the mainloop
+        # and destroys all widgets atomically. Do NOT call root.quit()
+        # first (it exits the mainloop without destroying the window,
+        # leaving tkinter in an inconsistent state), and do NOT destroy
+        # children manually (triggers StringVar GC mid-iteration).
         try:
-            for child in root.winfo_children():
-                child.destroy()
-        except Exception:  # pylint: disable=broad-except
-            pass
-        try:
-            root.quit()
+            root.unbind("<Key>")
         except Exception:  # pylint: disable=broad-except
             pass
         try:
