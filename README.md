@@ -1,122 +1,105 @@
-# WinSnap v2
+# WinSnap
 
-> A lightweight Windows 10/11 window-snapping utility driven entirely by global hotkeys — now with configurable shortcuts, incremental sizing, and a Settings window.
+> A lightweight Windows 10/11 window-snapping utility driven entirely by global hotkeys — with configurable shortcuts, incremental sizing, and a Settings window.
+
+Two implementations: **Python** (original) and **Rust** (native Win32 rewrite).
 
 ---
 
-## Features
+## Feature Comparison
 
-### Snap Hotkeys
+| Feature | Python | Rust |
+|---------|--------|------|
+| **Snap** left/right/top/bottom | ✅ | ✅ |
+| **Center** (60% width) | ✅ | ✅ |
+| **Full** work area | ✅ | ✅ |
+| **Restore** to pre-snap position | ✅ | ✅ |
+| **Incremental sizing** 50%→75%→100%→50% | ✅ | ✅ |
+| **DWM invisible border** compensation | ✅ | ✅ |
+| **DPI awareness** | per-monitor (`SetProcessDpiAwareness(2)`) | system-level (`SetProcessDPIAware`) |
+| **Global hotkeys** | `keyboard` library (3rd-party) | Win32 `RegisterHotKey` (native) |
+| **System tray** | `pystray` | Win32 `Shell_NotifyIconW` |
+| **Settings window** | tkinter | Win32 native controls |
+| **Config persistence** | `winsnap_config.json` | `winsnap_config.json` |
+| **Key capture in settings** | tkinter `<Key>` bind | `WM_KEYDOWN` + `GetKeyState` |
+| **Window identity tracking** `(pid, class, title)` | ✅ | ❌ |
+| **Shell window filtering** | 6 window classes | 4 window classes |
+| **Stale HWND cleanup** | ✅ | ❌ |
+| **Logging** | `winsnap.log` | ❌ |
+
+### Snap hotkeys
 
 | Hotkey | Action | Incremental Sizing |
 |--------|--------|--------------------|
-| `Ctrl+Alt+Left`  | Snap to **left half** | ✅ 50% → 75% → 100% → 50% |
+| `Ctrl+Alt+Left` | Snap to **left half** | ✅ 50% → 75% → 100% → 50% |
 | `Ctrl+Alt+Right` | Snap to **right half** | ✅ 50% → 75% → 100% → 50% |
-| `Ctrl+Alt+Up`    | Snap to **top half** | ✅ 50% → 75% → 100% → 50% |
-| `Ctrl+Alt+Down`  | Snap to **bottom half** | ✅ 50% → 75% → 100% → 50% |
-| `Ctrl+Alt+C`     | **Centre** window (60% width) | ❌ |
-| `Ctrl+Alt+F`     | **Full work area** | ❌ |
-| `Ctrl+Alt+R`     | **Restore** to pre-snap position | — |
+| `Ctrl+Alt+Up` | Snap to **top half** | ✅ 50% → 75% → 100% → 50% |
+| `Ctrl+Alt+Down` | Snap to **bottom half** | ✅ 50% → 75% → 100% → 50% |
+| `Ctrl+Alt+C` | **Centre** window (60% width) | ❌ |
+| `Ctrl+Alt+F` | **Full work area** | ❌ |
+| `Ctrl+Alt+R` | **Restore** to pre-snap position | — |
 
-> **Default hotkeys shown above.** All hotkeys are fully configurable via the Settings window (see below).
+> Default hotkeys shown. All are fully configurable via the Settings window.
 
-All actions target the **currently active (foreground) window**.
-All sizes are relative to the **work area of the monitor the window is on**, so multi-monitor setups are handled correctly.
+All actions target the **active foreground window**. All sizes are relative to the **monitor's work area** (multi-monitor aware).
 
-### Incremental Sizing
+### Incremental sizing
 
-When you press the same snap hotkey multiple times in a row, the window size increases progressively:
+When you press the same snap hotkey multiple times in a row, the window cycles through sizes:
 
-**Left / Right half:**
-| Press | Width |
-|-------|-------|
-| 1st | 50% of screen width |
-| 2nd | 75% of screen width |
-| 3rd | 100% (full width) |
-| 4th | Back to 50% (cycle) |
-
-**Top / Bottom half:**
-| Press | Height |
-|-------|--------|
-| 1st | 50% of screen height |
-| 2nd | 75% of screen height |
-| 3rd | 100% (full height) |
-| 4th | Back to 50% (cycle) |
-
-> Centre and Full are not affected by incremental sizing.
-
-### Settings Window
-
-- Open via the system-tray right-click menu → **Settings**
-- View and modify all 7 hotkey bindings
-- Click **Modify** next to any action, then press your desired key combination
-- **Save** to persist changes to `winsnap_config.json` and re-register hotkeys immediately
-- **Cancel** to discard changes
-- Copyright info displayed at the bottom of the window
+- **Left / Right**: 50% → 75% → 100% (width) → back to 50%
+- **Top / Bottom**: 50% → 75% → 100% (height) → back to 50%
+- **Center / Full**: no incremental sizing
 
 ---
 
-## Requirements
+## Comparison at a glance
 
-- Windows 10 or 11
-- Python 3.11+
+| Metric | Python | Rust |
+|--------|--------|------|
+| Binary size | ~15 MB (PyInstaller) | ~226 KB (release, LTO+strip) |
+| Startup time | ~2 s | <100 ms |
+| Memory usage | ~30 MB | ~1 MB |
+| Dependencies | pywin32, keyboard, pystray, Pillow | none (Win32 FFI via windows-sys) |
+| Environment | Python 3.11+ | Rust 2021 toolchain |
+| Window hiding | N/A (console by default) | `#![windows_subsystem = "windows"]` |
 
 ---
 
-## Installation
+## Setup
+
+### Python
 
 ```powershell
-# 1. Clone / download the project
-cd C:\Users\EricPan\WorkBuddy\2026-05-17-task-1\winsnap
-
-# 2. Install dependencies
 pip install -r requirements.txt
-
-# 3. Generate the tray icon
 python icon.py
-
-# 4. Run WinSnap
 python winsnap.py
 ```
 
-The program minimises to the system tray immediately.
-Right-click the tray icon for **About WinSnap**, **Settings**, or **Exit**.
+### Rust
 
----
-
-## Configuration
-
-WinSnap v2 stores hotkey configuration in `winsnap_config.json` (in the same directory as `winsnap.py`). On first launch the file is created automatically with default settings.
-
-Example `winsnap_config.json`:
-```json
-{
-  "hotkeys": {
-    "left": "ctrl+alt+left",
-    "right": "ctrl+alt+right",
-    "top": "ctrl+alt+up",
-    "bottom": "ctrl+alt+down",
-    "center": "ctrl+alt+c",
-    "full": "ctrl+alt+f",
-    "restore": "ctrl+alt+r"
-  }
-}
+```powershell
+cd rust_version/winsnap_rust
+cargo build --release
+.\target\release\winsnapper.exe
 ```
 
-You can edit this file directly (then restart WinSnap) or use the Settings window for a live update.
+## Build standalone .exe
 
----
-
-## Building a standalone .exe
+### Python
 
 ```powershell
 build_exe.bat
+# Output: dist/WinSnap.exe
 ```
 
-The compiled executable will be at `dist\WinSnap.exe`.
-You can place it in your Startup folder to launch it automatically at login.
+### Rust
 
-> Note: `tkinter` is included via `--hidden-import=tkinter` in the build script.
+```powershell
+cd rust_version/winsnap_rust
+cargo build --release
+# Output: target/release/winsnapper.exe
+```
 
 ---
 
@@ -124,45 +107,46 @@ You can place it in your Startup folder to launch it automatically at login.
 
 ```
 winsnap/
-├── winsnap.py            # Main program — hotkeys, snap logic, tray icon, settings
-├── icon.py               # Icon generator (Pillow) → produces icon.ico (window shape)
-├── winsnap_config.json   # Persisted hotkey configuration (auto-created)
-├── requirements.txt      # Python dependencies
-├── build_exe.bat         # PyInstaller build script
-└── README.md             # This file
+├── winsnap.py                  # Python main program
+├── icon.py                     # Python icon generator
+├── winsnap_config.json         # Config file (auto-created)
+├── requirements.txt            # Python dependencies
+├── build_exe.bat               # PyInstaller build script
+├── unittests/                  # Python unit tests
+├── docs/                       # Documentation
+│   ├── bugfix-report-v1.1.0.md
+│   └── rust-subsystem-guide.md
+├── rust_version/
+│   └── winsnap_rust/
+│       ├── Cargo.toml
+│       ├── src/main.rs         # Rust implementation (~1056 lines)
+│       └── spec/
+│           └── migration-status.md
+└── README.md
 ```
 
 ---
 
 ## How it works
 
-1. **DPI awareness** is enabled at startup so that all Win32 geometry calls return physical pixel coordinates on high-DPI displays.
-2. **Configuration** is loaded from `winsnap_config.json` (or defaults if the file doesn't exist).
-3. **Hotkeys** are registered globally via the `keyboard` library on a background daemon thread.
-4. When a snap hotkey fires, WinSnap:
-   - Records the window's current rect in `original_positions[hwnd]`.
-   - Calls `ShowWindow(hwnd, SW_RESTORE)` to un-maximise if needed.
-   - Checks `last_snap_state[hwnd]` to determine incremental sizing level.
-   - Queries `GetMonitorInfo` for the **work area** of the monitor containing the window.
-   - Calls `MoveWindow` with the calculated geometry (50%/75%/100% depending on level).
-5. `Ctrl+Alt+R` (or the configured restore hotkey) looks up `original_positions[hwnd]` and calls `MoveWindow` to revert.
-6. The **Settings window** (tkinter) allows live reconfiguration of hotkeys; saving writes `winsnap_config.json` and immediately re-registers hotkeys.
-7. The **system tray** is powered by `pystray`; no main window is shown.
+1. **DPI awareness** enabled at startup for correct physical pixel coordinates.
+2. **Config** loaded from `winsnap_config.json` (auto-created with defaults).
+3. **Hotkeys** registered globally — Python via `keyboard` daemon thread, Rust via Win32 `RegisterHotKey` system message loop.
+4. On snap trigger: records original window rect, restores if maximized, checks incremental sizing level, queries `GetMonitorInfo` for the work area, calls `MoveWindow` with calculated geometry.
+5. **Restore** hotkey reverts to the saved pre-snap position.
+6. **Settings window** allows live hotkey reconfiguration — save persists to JSON and re-registers hotkeys immediately.
+7. **System tray** — Python via `pystray`, Rust via `Shell_NotifyIconW`; no main window shown.
 
 ---
 
-## Troubleshooting
+## Requirements
 
-| Symptom | Solution |
-|---------|----------|
-| Hotkeys don't fire | Run WinSnap as Administrator (some apps capture keys at higher privilege) |
-| Window snaps to wrong monitor | Ensure the window is actually in the foreground on that monitor before pressing the hotkey |
-| `icon.ico` missing warning | Run `python icon.py` once to regenerate it |
-| Build fails | Make sure `pyinstaller` is installed: `pip install pyinstaller` |
-| Settings window doesn't open | Ensure `tkinter` is available (it ships with standard Python on Windows) |
+- Windows 10 or 11
+- **Python version**: Python 3.11+
+- **Rust version**: Rust 2021 edition toolchain (for building)
 
 ---
 
 ## License
 
-MIT — free to use, modify, and distribute.
+MIT
