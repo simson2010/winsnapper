@@ -2,7 +2,7 @@
 
 > A lightweight Windows 10/11 window-snapping utility driven entirely by global hotkeys — with configurable shortcuts, incremental sizing, and a Settings window.
 
-Two implementations: **Python** (original) and **Rust** (native Win32 rewrite).
+WinSnap snaps the active window to screen edges (left/right/top/bottom), center, or full work area with global hotkeys. Incremental sizing (50%→75%→100%) on repeated press, plus one-key restore. Full multi-monitor support and live hotkey reconfiguration via a Settings window. No bloat, no telemetry, no internet access — just a tray icon and instant keyboard-driven window management.
 
 ---
 
@@ -132,7 +132,7 @@ winsnap/
 1. **DPI awareness** enabled at startup for correct physical pixel coordinates.
 2. **Config** loaded from `winsnap_config.json` (auto-created with defaults).
 3. **Hotkeys** registered globally — Python via `keyboard` daemon thread, Rust via Win32 `RegisterHotKey` system message loop.
-4. On snap trigger: records original window rect, restores if maximized, checks incremental sizing level, queries `GetMonitorInfo` for the work area, calls `MoveWindow` with calculated geometry.
+4. On snap trigger: records original window rect, restores if maximized, checks incremental sizing level, queries `GetMonitorInfo` for the work area, calls `MoveWindow` with calculated geometry. Windows 10/11 add invisible transparent borders (~7-8 px) via DWM — `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` is used to compensate so windows align precisely to the work area edge.
 5. **Restore** hotkey reverts to the saved pre-snap position.
 6. **Settings window** allows live hotkey reconfiguration — save persists to JSON and re-registers hotkeys immediately.
 7. **System tray** — Python via `pystray`, Rust via `Shell_NotifyIconW`; no main window shown.
