@@ -526,6 +526,8 @@ struct SettingsState {
     edit_hwnds: [HWND; 7],
     /// Modify button HWNDs (for changing text to "Cancel")
     btn_hwnds: [HWND; 7],
+    /// System font handle (deleted on WM_DESTROY)
+    font: HFONT,
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +638,24 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
+/// Get the system default font handle. Caller must call `DeleteObject` when done.
+unsafe fn get_system_font() -> HFONT {
+    let mut ncm: NONCLIENTMETRICSW = std::mem::zeroed();
+    ncm.cbSize = std::mem::size_of::<NONCLIENTMETRICSW>() as u32;
+    SystemParametersInfoW(
+        SPI_GETNONCLIENTMETRICS,
+        ncm.cbSize,
+        &mut ncm as *mut _ as *mut _,
+        0,
+    );
+    CreateFontIndirectW(&ncm.lfMessageFont)
+}
+
+/// Send WM_SETFONT to a child window.
+unsafe fn set_child_font(hwnd: HWND, font: HFONT) {
+    SendMessageW(hwnd, WM_SETFONT, font as usize, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Settings window
 // ---------------------------------------------------------------------------
@@ -671,19 +691,26 @@ unsafe fn open_settings_window(main_hwnd: HWND, config: &Config) {
         main_hwnd,
         edit_hwnds: [std::ptr::null_mut(); 7],
         btn_hwnds: [std::ptr::null_mut(); 7],
+        font: get_system_font(),
     });
 
     let class_name = to_wide("WinSnapSettings");
     let title = to_wide("WinSnap Settings");
+    let win_w = 480i32;
+    let win_h = 420i32;
+    let screen_w = GetSystemMetrics(SM_CXSCREEN);
+    let screen_h = GetSystemMetrics(SM_CYSCREEN);
+    let x = (screen_w - win_w) / 2;
+    let y = (screen_h - win_h) / 2;
     CreateWindowExW(
         0,
         class_name.as_ptr(),
         title.as_ptr(),
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        480,
-        420,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
+        x,
+        y,
+        win_w,
+        win_h,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
         GetModuleHandleW(std::ptr::null()),
@@ -708,12 +735,13 @@ unsafe extern "system" fn settings_wnd_proc(
 
             let state = &mut *(state_ptr as *mut SettingsState);
             let hinst = GetModuleHandleW(std::ptr::null());
+            let font = state.font;
 
             // Header labels
             let headers = ["Action", "Hotkey", ""];
             for (col, text) in headers.iter().enumerate() {
                 let w = to_wide(text);
-                CreateWindowExW(
+                let h = CreateWindowExW(
                     0,
                     to_wide("STATIC").as_ptr(),
                     w.as_ptr(),
@@ -727,6 +755,7 @@ unsafe extern "system" fn settings_wnd_proc(
                     hinst,
                     std::ptr::null(),
                 );
+                set_child_font(h, font);
             }
 
             // 7 rows: label + edit + modify button
@@ -735,7 +764,7 @@ unsafe extern "system" fn settings_wnd_proc(
 
                 // Action label
                 let label = to_wide(ACTION_LABELS[i]);
-                CreateWindowExW(
+                let lbl = CreateWindowExW(
                     0,
                     to_wide("STATIC").as_ptr(),
                     label.as_ptr(),
@@ -749,6 +778,7 @@ unsafe extern "system" fn settings_wnd_proc(
                     hinst,
                     std::ptr::null(),
                 );
+                set_child_font(lbl, font);
 
                 // Edit (read-only display of current hotkey)
                 let edit_text = to_wide(&state.working_hotkeys[i]);
@@ -767,6 +797,7 @@ unsafe extern "system" fn settings_wnd_proc(
                     std::ptr::null(),
                 );
                 state.edit_hwnds[i] = edit_hwnd;
+                set_child_font(edit_hwnd, font);
 
                 // Modify button
                 let btn_text = to_wide("Modify");
@@ -785,10 +816,11 @@ unsafe extern "system" fn settings_wnd_proc(
                     std::ptr::null(),
                 );
                 state.btn_hwnds[i] = btn_hwnd;
+                set_child_font(btn_hwnd, font);
             }
 
             // Separator
-            CreateWindowExW(
+            let sep = CreateWindowExW(
                 0,
                 to_wide("STATIC").as_ptr(),
                 to_wide("").as_ptr(),
@@ -802,10 +834,11 @@ unsafe extern "system" fn settings_wnd_proc(
                 hinst,
                 std::ptr::null(),
             );
+            set_child_font(sep, font);
 
             // Save and Cancel buttons
             let save_text = to_wide("Save");
-            CreateWindowExW(
+            let save_btn = CreateWindowExW(
                 0,
                 to_wide("BUTTON").as_ptr(),
                 save_text.as_ptr(),
@@ -819,8 +852,9 @@ unsafe extern "system" fn settings_wnd_proc(
                 hinst,
                 std::ptr::null(),
             );
+            set_child_font(save_btn, font);
             let cancel_text = to_wide("Cancel");
-            CreateWindowExW(
+            let cancel_btn = CreateWindowExW(
                 0,
                 to_wide("BUTTON").as_ptr(),
                 cancel_text.as_ptr(),
@@ -834,10 +868,11 @@ unsafe extern "system" fn settings_wnd_proc(
                 hinst,
                 std::ptr::null(),
             );
+            set_child_font(cancel_btn, font);
 
             // Copyright
             let copyright = to_wide("WinSnap v1.1.0  |  MIT License");
-            CreateWindowExW(
+            let cpy = CreateWindowExW(
                 0,
                 to_wide("STATIC").as_ptr(),
                 copyright.as_ptr(),
@@ -851,6 +886,7 @@ unsafe extern "system" fn settings_wnd_proc(
                 hinst,
                 std::ptr::null(),
             );
+            set_child_font(cpy, font);
 
             0
         }
@@ -1000,10 +1036,11 @@ unsafe extern "system" fn settings_wnd_proc(
             0
         }
         WM_DESTROY => {
-            // Free the SettingsState
+            // Free the SettingsState and font
             let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if state_ptr != 0 {
-                let _ = Box::from_raw(state_ptr as *mut SettingsState);
+                let state = Box::from_raw(state_ptr as *mut SettingsState);
+                DeleteObject(state.font as _);
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             }
             0
