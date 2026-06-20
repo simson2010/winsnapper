@@ -119,6 +119,32 @@ fn chrono_free_local_time() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Embedded icon
+// ---------------------------------------------------------------------------
+
+const ICON_DATA: &[u8] = include_bytes!("..\\icon\\icon.ico");
+
+/// Parse embedded .ico data and create an HICON.
+/// Writes to a temp file and loads via LoadImageW for reliable parsing.
+unsafe fn load_embedded_icon() -> HICON {
+    let temp_path = std::env::temp_dir().join("winsnap_icon.ico");
+    if std::fs::write(&temp_path, ICON_DATA).is_err() {
+        return std::ptr::null_mut();
+    }
+    let wide = to_wide(temp_path.to_str().unwrap_or(""));
+    let hicon = LoadImageW(
+        std::ptr::null_mut(),
+        wide.as_ptr(),
+        IMAGE_ICON,
+        0,
+        0,
+        LR_LOADFROMFILE | LR_DEFAULTSIZE,
+    ) as HICON;
+    let _ = std::fs::remove_file(&temp_path);
+    hicon
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -1117,20 +1143,10 @@ fn main() {
         }
 
         // Create tray icon
-        let hdc = GetDC(std::ptr::null_mut());
-        let mem_dc = CreateCompatibleDC(hdc);
-        let bmp = CreateCompatibleBitmap(hdc, 16, 16);
-        let old = SelectObject(mem_dc, bmp);
-        let brush = CreateSolidBrush(0x00DD8833);
-        let rect = RECT {
-            left: 0,
-            top: 0,
-            right: 16,
-            bottom: 16,
-        };
-        let _ = FillRect(mem_dc, &rect, brush);
-        let _ = DeleteObject(brush as _);
-        let _ = SelectObject(mem_dc, old);
+        let hicon = load_embedded_icon();
+        if hicon.is_null() {
+            warn!("Failed to load embedded icon, using fallback");
+        }
 
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -1138,21 +1154,40 @@ fn main() {
         nid.uID = 1;
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_TRAYICON;
-        nid.hIcon = CreateIconIndirect(&ICONINFO {
-            fIcon: 1,
-            xHotspot: 0,
-            yHotspot: 0,
-            hbmMask: bmp,
-            hbmColor: bmp,
-        });
+        if !hicon.is_null() {
+            nid.hIcon = hicon;
+        } else {
+            // Fallback: draw a simple orange square
+            let hdc = GetDC(std::ptr::null_mut());
+            let mem_dc = CreateCompatibleDC(hdc);
+            let bmp = CreateCompatibleBitmap(hdc, 16, 16);
+            let old = SelectObject(mem_dc, bmp);
+            let brush = CreateSolidBrush(0x00DD8833);
+            let rect = RECT {
+                left: 0,
+                top: 0,
+                right: 16,
+                bottom: 16,
+            };
+            let _ = FillRect(mem_dc, &rect, brush);
+            let _ = DeleteObject(brush as _);
+            let _ = SelectObject(mem_dc, old);
+            nid.hIcon = CreateIconIndirect(&ICONINFO {
+                fIcon: 1,
+                xHotspot: 0,
+                yHotspot: 0,
+                hbmMask: bmp,
+                hbmColor: bmp,
+            });
+            let _ = DeleteDC(mem_dc);
+            let _ = DeleteObject(bmp as _);
+            let _ = ReleaseDC(std::ptr::null_mut(), hdc);
+        }
+
         let tip = to_wide("WinSnap v1.1.0");
         let tip_len = tip.len().min(127);
         nid.szTip[..tip_len].copy_from_slice(&tip[..tip_len]);
         Shell_NotifyIconW(NIM_ADD, &nid);
-
-        let _ = DeleteDC(mem_dc);
-        let _ = DeleteObject(bmp as _);
-        let _ = ReleaseDC(std::ptr::null_mut(), hdc);
 
         // Message loop
         let mut msg: MSG = std::mem::zeroed();
@@ -1164,6 +1199,9 @@ fn main() {
         // Cleanup
         info!("Shutting down, cleaning up");
         Shell_NotifyIconW(NIM_DELETE, &nid);
+        if !hicon.is_null() {
+            DestroyIcon(hicon);
+        }
         let _ = UnregisterHotKey(hwnd, ID_LEFT as i32);
         let _ = UnregisterHotKey(hwnd, ID_RIGHT as i32);
         let _ = UnregisterHotKey(hwnd, ID_TOP as i32);
