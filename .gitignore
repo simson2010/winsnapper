@@ -5,6 +5,9 @@ __pycache__/
 *.so
 .Python
 
+# Rust
+rust_version/winsnap_rust/target
+
 # Virtual environments
 .venv/
 venv/

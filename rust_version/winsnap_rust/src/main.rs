@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Dwm::*;
@@ -63,10 +64,58 @@ fn config_path() -> PathBuf {
 
 fn load_config() -> Config {
     let path = config_path();
+    info!("Loading config from {}", path.display());
     match fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
-        Err(_) => Config::default(),
+        Ok(data) => {
+            let config: Config = serde_json::from_str(&data).unwrap_or_default();
+            info!("Config loaded: {:?}", config);
+            config
+        }
+        Err(e) => {
+            warn!("Failed to load config ({}), creating default", e);
+            let config = Config::default();
+            let json = serde_json::to_string_pretty(&config).unwrap();
+            if let Err(e) = std::fs::write(&path, &json) {
+                warn!("Failed to write default config to {}: {}", path.display(), e);
+            } else {
+                info!("Default config written to {}", path.display());
+            }
+            config
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+fn log_path() -> PathBuf {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    exe.parent()
+        .unwrap_or(&PathBuf::from("."))
+        .join("winsnap.log")
+}
+
+fn setup_logging() {
+    let path = log_path();
+    let _ = fern::Dispatch::new()
+        .format(|out, message, record| {
+            let now = chrono_free_local_time();
+            out.finish(format_args!("{} [{}] {}", now, record.level(), message))
+        })
+        .level(log::LevelFilter::Debug)
+        .chain(fern::Dispatch::new().chain(std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap()))
+        .apply();
+}
+
+/// Minimal local-time formatter using chrono.
+/// Output: "2026-06-20 14:30:15"
+fn chrono_free_local_time() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -187,8 +236,10 @@ unsafe fn is_snapifiable(hwnd: HWND) -> bool {
 const INCREMENT_PCT: [f64; 3] = [0.50, 0.75, 1.00];
 
 unsafe fn snap_window(position: &str, state: &mut SnapState) {
+    info!("snap_window({}) triggered", position);
     let hwnd = GetForegroundWindow();
     if !is_snapifiable(hwnd) {
+        debug!("snap_window({}): hwnd {:?} not snapifiable, skipping", position, hwnd);
         return;
     }
 
@@ -283,11 +334,17 @@ unsafe fn snap_window(position: &str, state: &mut SnapState) {
     };
 
     let _ = MoveWindow(hwnd, x, y, final_w, final_h, 1);
+    info!(
+        "snap_window({}): hwnd={:?} level={} -> ({}, {}, {}, {})",
+        position, hwnd, level, x, y, final_w, final_h
+    );
 }
 
 unsafe fn restore_window(state: &mut SnapState) {
+    info!("restore_window() triggered");
     let hwnd = GetForegroundWindow();
     if !is_snapifiable(hwnd) {
+        debug!("restore_window: hwnd {:?} not snapifiable, skipping", hwnd);
         return;
     }
 
@@ -295,6 +352,12 @@ unsafe fn restore_window(state: &mut SnapState) {
         state.last_snap.remove(&(hwnd as isize));
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = MoveWindow(hwnd, left, top, right - left, bottom - top, 1);
+        info!(
+            "restore_window: hwnd={:?} -> ({}, {}, {}, {})",
+            hwnd, left, top, right, bottom
+        );
+    } else {
+        debug!("restore_window: hwnd {:?} has no saved position", hwnd);
     }
 }
 
@@ -521,6 +584,7 @@ unsafe extern "system" fn wnd_proc(
 
                     match cmd as u32 {
                         IDM_EXIT => {
+                            info!("Exit requested, cleaning up");
                             PostQuitMessage(0);
                         }
                         IDM_ABOUT => {
@@ -529,6 +593,7 @@ unsafe extern "system" fn wnd_proc(
                             MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_OK);
                         }
                         IDM_SETTINGS => {
+                            info!("Opening settings window");
                             let config = load_config();
                             open_settings_window(hwnd, &config);
                         }
@@ -802,6 +867,7 @@ unsafe extern "system" fn settings_wnd_proc(
             if cmd_type == BN_CLICKED {
                 if cmd_id == IDC_SAVE {
                     // Save: write config and re-register hotkeys
+                    info!("Settings Save clicked");
                     let config = Config {
                         hotkeys: Hotkeys {
                             left: state.working_hotkeys[0].clone(),
@@ -833,6 +899,9 @@ unsafe extern "system" fn settings_wnd_proc(
                     {
                         if let Some((mods, vk)) = parse_hotkey(&state.working_hotkeys[i]) {
                             let _ = RegisterHotKey(main_hwnd, *id as i32, mods, vk);
+                            info!("Hotkey registered: {} -> {}", &state.working_hotkeys[i], id);
+                        } else {
+                            warn!("Invalid hotkey format: {}", &state.working_hotkeys[i]);
                         }
                     }
 
@@ -840,6 +909,7 @@ unsafe extern "system" fn settings_wnd_proc(
                     return 0;
                 }
                 if cmd_id == IDC_CANCEL {
+                    info!("Settings Cancel clicked");
                     DestroyWindow(hwnd);
                     return 0;
                 }
@@ -948,11 +1018,18 @@ unsafe extern "system" fn settings_wnd_proc(
 
 fn main() {
     unsafe {
+        setup_logging();
+        info!("=== WinSnap v1.1.0 starting ===");
+        info!("EXE: {:?}", std::env::current_exe().unwrap_or_default());
+        info!("CONFIG: {:?}", config_path());
+        info!("LOG: {:?}", log_path());
+
         // Enable per-monitor DPI awareness — must be done before any Win32
         // geometry calls, otherwise GetWindowRect returns logical (virtualized)
         // pixels while DwmGetWindowAttribute returns physical pixels, causing
         // border offset calculations to be wrong and windows to overflow.
         SetProcessDPIAware();
+        info!("DPI awareness: SetProcessDPIAware (system-level)");
 
         let config = load_config();
         let state = Arc::new(Mutex::new(SnapState::new()));
@@ -993,8 +1070,12 @@ fn main() {
         for (id, combo) in &hotkey_map {
             if let Some((modifiers, vk)) = parse_hotkey(combo) {
                 if RegisterHotKey(hwnd, *id as i32, modifiers, vk) == 0 {
-                    eprintln!("Failed to register hotkey: {} -> {}", combo, id);
+                    warn!("Failed to register hotkey: {} -> {}", combo, id);
+                } else {
+                    info!("Hotkey registered: {} -> {}", combo, id);
                 }
+            } else {
+                warn!("Invalid hotkey format: {}", combo);
             }
         }
 
@@ -1044,6 +1125,7 @@ fn main() {
         }
 
         // Cleanup
+        info!("Shutting down, cleaning up");
         Shell_NotifyIconW(NIM_DELETE, &nid);
         let _ = UnregisterHotKey(hwnd, ID_LEFT as i32);
         let _ = UnregisterHotKey(hwnd, ID_RIGHT as i32);
